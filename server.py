@@ -1,12 +1,11 @@
 import os, json, time, hashlib, hmac, base64, secrets, urllib.request, urllib.parse
 from datetime import datetime, timezone
-from typing import Any
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from pymongo import MongoClient
 
-app=FastAPI(title='BHUSAKTHI Early Warning & Response API',version='4.2.0')
+app=FastAPI(title='BHUSAKTHI Early Warning & Response API',version='4.3.0')
 origin=os.getenv('FRONTEND_ORIGIN','*')
 app.add_middleware(CORSMiddleware,allow_origins=[origin] if origin!='*' else ['*'],allow_credentials=origin!='*',allow_methods=['*'],allow_headers=['*'])
 MONGO_URI=os.getenv('MONGO_URI',''); client=None; db=None
@@ -14,8 +13,8 @@ if MONGO_URI:
     try:
         client=MongoClient(MONGO_URI,serverSelectionTimeoutMS=3000); client.admin.command('ping'); db=client[os.getenv('MONGO_DB','bhusakthi')]
     except Exception: client=None; db=None
-RAW=[('GSI-AR-01','Bhalukpong - Bomdila Corridor','West Kameng','Arunachal Pradesh',27.2645,92.4159,89,46,2150,'NH-13',4200),('GSI-AR-02','Tawang - Bomdila Corridor','Tawang','Arunachal Pradesh',27.5867,91.859,86,43,2650,'NH-13',2900),('GSI-AR-03','Itanagar - Naharlagun Corridor','Papum Pare','Arunachal Pradesh',27.102,93.695,72,29,440,'NH-15',6100),('GSI-AS-01','Haflong - Silchar Corridor','Dima Hasao','Assam',25.164,93.0176,79,34,680,'NH-27',3500),('GSI-ML-01','Cherrapunji - Mawsynram Escarpment','East Khasi Hills','Meghalaya',25.2986,91.5822,81,38,1430,'SH-5',3100),('GSI-ML-02','Shillong - Jowai Corridor','East Khasi Hills / West Jaintia Hills','Meghalaya',25.467,92.203,74,33,1250,'NH-6',4700),('GSI-MZ-01','Sairang - Aizawl Syncline','Aizawl','Mizoram',23.7271,92.7176,84,35,1132,'NH-54',3800),('GSI-MZ-02','Lunglei Corridor','Lunglei','Mizoram',22.8877,92.738,78,37,1220,'NH-302',2500),('GSI-NL-01','Pfutsero - Kohima Ridge','Kohima','Nagaland',25.6751,94.1086,76,32,1444,'NH-29',2600),('GSI-MN-01','Ukhrul - Imphal Corridor','Ukhrul / Imphal East','Manipur',24.75,94.01,77,36,1120,'NH-202',3300),('GSI-SK-01','Gangtok - Rangpo Corridor','Gangtok / Pakyong','Sikkim',27.3389,88.6065,88,44,1650,'NH-10',5200)]
-REGIONS=[{'id':a,'name':b,'district':c,'state':d,'lat':e,'lng':f,'susceptibility':g,'slope':h,'elevation':i,'road':j,'road_status':'OPEN','population_at_risk':k,'rainfall_mm':0,'soil_moisture_pct':0,'temperature_c':None,'humidity_pct':None,'wind_kmh':None,'data_status':'LIVE_WEATHER_OR_DEMO_FALLBACK','weather_source':'Open-Meteo','risk_source':'WEATHER_ADJUSTED_BASELINE'} for a,b,c,d,e,f,g,h,i,j,k in RAW]
+RAW=[('GSI-AR-01','Bhalukpong - Bomdila Corridor','West Kameng','Arunachal Pradesh',27.2645,92.4159,89,46,2150,'NH-13',4200),('GSI-AR-02','Tawang - Bomdila Corridor','Tawang','Arunachal Pradesh',27.5867,91.859,86,43,2650,'NH-13',2900),('GSI-AR-03','Itanagar - Naharlagun Corridor','Papum Pare','Arunachal Pradesh',27.102,93.695,72,29,440,'NH-15',6100),('GSI-AS-01','Haflong - Silchar Corridor','Dima Hasao','Assam',25.164,93.0176,79,34,680,'NH-27',3500),('GSI-ML-01','Cherrapunji - Mawsynram Escarpment','East Khasi Hills','Meghalaya',25.2986,91.5822,81,38,1430,'SH-5',3100),('GSI-ML-02','Shillong - Jowai Corridor','East Khasi Hills / West Jaintia Hills','Meghalaya',25.467,92.203,74,33,1250,'NH-6',4700),('GSI-MZ-01','Sairang - Aizawl Syncline','Aizawl', 'Mizoram',23.7271,92.7176,84,35,1132,'NH-54',3800),('GSI-MZ-02','Lunglei Corridor','Lunglei','Mizoram',22.8877,92.738,78,37,1220,'NH-302',2500),('GSI-NL-01','Pfutsero - Kohima Ridge','Kohima','Nagaland',25.6751,94.1086,76,32,1444,'NH-29',2600),('GSI-MN-01','Ukhrul - Imphal Corridor','Ukhrul / Imphal East','Manipur',24.75,94.01,77,36,1120,'NH-202',3300),('GSI-SK-01','Gangtok - Rangpo Corridor','Gangtok / Pakyong','Sikkim',27.3389,88.6065,88,44,1650,'NH-10',5200)]
+REGIONS=[{'id':a,'name':b,'district':c,'state':d,'lat':e,'lng':f,'susceptibility':g,'slope':h,'elevation':i,'road':j,'road_status':'OPEN','population_at_risk':k,'rainfall_mm':None,'soil_moisture_pct':None,'temperature_c':None,'humidity_pct':None,'wind_kmh':None,'data_status':'WAITING_FOR_LIVE_WEATHER','weather_source':'Open-Meteo','risk_source':'WEATHER_ADJUSTED_BASELINE'} for a,b,c,d,e,f,g,h,i,j,k in RAW]
 memory_users=[]; memory_incidents=[]; memory_alerts=[]; memory_recipients=[]
 def collection(name): return db[name] if db is not None else None
 def pwd_hash(password,salt=None):
@@ -39,13 +38,17 @@ def auth_user(authorization):
         return user
     except Exception: raise HTTPException(401,'Invalid or expired session')
 def weather(lat,lng):
-    q=urllib.parse.urlencode({'latitude':lat,'longitude':lng,'current':'temperature_2m,relative_humidity_2m,rain,precipitation,wind_speed_10m,soil_moisture_0_to_1cm','hourly':'rain,precipitation,soil_moisture_0_to_1cm','past_hours':24,'forecast_hours':24,'timezone':'auto'})
+    q=urllib.parse.urlencode({'latitude':lat,'longitude':lng,'current':'temperature_2m,relative_humidity_2m,rain,precipitation,wind_speed_10m','hourly':'rain,precipitation,soil_moisture_0_to_1cm','past_hours':24,'forecast_hours':1,'timezone':'auto'})
     with urllib.request.urlopen('https://api.open-meteo.com/v1/forecast?'+q,timeout=8) as r:return json.loads(r.read().decode())
 def apply_weather(r):
     try:
-        w=weather(r['lat'],r['lng']); c=w.get('current',{}); h=w.get('hourly',{}); rains=h.get('rain',[]); rain24=round(sum(float(v or 0) for v in rains[:24]),1); soil=float(c.get('soil_moisture_0_to_1cm') or 0)*100
-        r.update({'rainfall_mm':rain24,'rain_1h_mm':round(float(c.get('rain') or 0),1),'soil_moisture_pct':round(soil,1),'temperature_c':c.get('temperature_2m'),'humidity_pct':c.get('relative_humidity_2m'),'wind_kmh':c.get('wind_speed_10m'),'weather_source':'Open-Meteo LIVE','data_status':'LIVE_WEATHER','weather_updated_at':datetime.now(timezone.utc).isoformat()}); return r
-    except Exception:r['data_status']='DEMO_FALLBACK'; return r
+        w=weather(r['lat'],r['lng']); c=w.get('current',{}); h=w.get('hourly',{}); rains=h.get('rain',[]); soils=h.get('soil_moisture_0_to_1cm',[])
+        rain24=round(sum(float(v or 0) for v in rains[:24]),1)
+        soil_value=soils[23] if len(soils)>23 else (soils[-1] if soils else None)
+        if soil_value is None: raise RuntimeError('Open-Meteo soil moisture unavailable')
+        r.update({'rainfall_mm':rain24,'rain_1h_mm':round(float(c.get('rain') or 0),1),'soil_moisture_pct':round(float(soil_value)*100,1),'temperature_c':c.get('temperature_2m'),'humidity_pct':c.get('relative_humidity_2m'),'wind_kmh':c.get('wind_speed_10m'),'weather_source':'Open-Meteo LIVE','data_status':'LIVE_WEATHER','weather_updated_at':datetime.now(timezone.utc).isoformat()}); return r
+    except Exception as e:
+        r.update({'data_status':'WEATHER_ERROR','weather_source':'Open-Meteo ERROR','weather_error':str(e),'temperature_c':None,'rainfall_mm':None,'rain_1h_mm':None,'soil_moisture_pct':None}); return r
 def risk(r,rain_override=None,soil_override=None):
     rain=float(rain_override if rain_override is not None else r.get('rainfall_mm') or 0); soil=float(soil_override if soil_override is not None else r.get('soil_moisture_pct') or 0); structural=min(28,r['susceptibility']*.18+(r['slope']/50*100)*.10); s=round(min(100,structural+min(45,rain/180*45)+min(27,soil/100*27))); return s,('CRITICAL' if s>=75 else 'HIGH' if s>=55 else 'WATCH' if s>=35 else 'LOW')
 def flood(r):
@@ -62,7 +65,7 @@ class RiskUpdate(BaseModel): region_id:str; rainfall_mm:float=Field(ge=0); soil_
 class Incident(BaseModel):
     sector_name:str=Field(min_length=2,max_length=160); district:str='Field Observation'; state:str='North Eastern Region'; lat:float; lng:float; severity:str='HIGH'; type:str='Field slope observation'; notes:str=''; media:list[str]=[]
 @app.get('/health')
-def health():return {'status':'ok','version':'4.2.0','weather':'Open-Meteo','database':'mongodb' if db is not None else 'memory','demo_mode':db is None}
+def health():return {'status':'ok','version':'4.3.0','weather':'Open-Meteo LIVE','database':'mongodb' if db is not None else 'memory','demo_mode':db is None}
 @app.post('/api/auth/register')
 def register(x:Register):
     if not any(r['id']==x.region_id for r in REGIONS):raise HTTPException(400,'Unknown region')
